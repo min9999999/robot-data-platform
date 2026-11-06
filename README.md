@@ -4,6 +4,20 @@
 
 ![대시보드](docs/images/dashboard.png)
 
+## 데이터 품질
+
+dbt 테스트 7개를 매 실행마다 돌리고, 결과를 `DBT_TEST_RESULTS`에 쌓아 대시보드의 품질 배지에서 확인합니다.
+
+<img src="docs/images/data_quality.png" width="480" alt="데이터 품질 테스트 결과">
+
+| 단계 | 검사 | 실패 시 |
+|---|---|---|
+| 원본(staging) | EVENT_ID · ROBOT_ID · EVENT_TIMESTAMP 빈 값 없음 | 경고 (원본 품질 모니터링) |
+| CLEAN | EVENT_ID 빈 값 없음 · 중복 없음, ROBOT_ID 빈 값 없음, STATUS 허용 값만 | 실패 (알림 단계 중단) |
+
+- **데이터 신선도:** 대시보드 제목 아래에 마지막 적재 시각과 평균 적재 지연을 표시하고, 15분 이상 적재가 멈추면 빨간색으로 경고합니다.
+- **추적성:** RAW에 `SOURCE_FILE`(원본 S3 파일)과 `LOADED_AT`(적재 시각)을 기록해, 경고 이력에서 어느 파일에서 온 데이터인지 바로 확인합니다.
+
 ## 아키텍처
 
 EC2 시뮬레이터 → S3 → Airflow → Snowflake(RAW) → dbt(CLEAN + 품질 테스트) → Streamlit / 알람 메일
