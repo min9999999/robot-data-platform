@@ -213,14 +213,37 @@ def load_recent_data():
 
 @st.cache_data(ttl=300)
 def load_alert_history():
-    sql = f"""
-        SELECT
-            ROBOT_ID, EVENT_TIMESTAMP,
-            TEMPERATURE, VIBRATION, MOTOR_CURRENT, SPEED, STATUS
+    base = f"""
         FROM {TABLE}
         WHERE UPPER(STATUS) IN ('WARNING', 'DANGER')
         ORDER BY EVENT_TIMESTAMP DESC
         LIMIT 100
+    """
+    try:
+        # SOURCE_FILE: 이 행을 적재한 S3 파일 (추적용)
+        return conn.query(
+            "SELECT ROBOT_ID, EVENT_TIMESTAMP, TEMPERATURE, VIBRATION, "
+            "MOTOR_CURRENT, SPEED, STATUS, SOURCE_FILE" + base,
+            ttl=300,
+        )
+    except Exception:
+        # CLEAN에 아직 SOURCE_FILE 컬럼이 없으면 기존 방식으로 조회
+        return conn.query(
+            "SELECT ROBOT_ID, EVENT_TIMESTAMP, TEMPERATURE, VIBRATION, "
+            "MOTOR_CURRENT, SPEED, STATUS" + base,
+            ttl=300,
+        )
+
+
+@st.cache_data(ttl=300)
+def load_freshness():
+    """데이터 신선도: 마지막 적재 시각, 최근 1시간 평균 적재 지연(초). 둘 다 UTC 기준."""
+    sql = f"""
+        SELECT
+            MAX(LOADED_AT) AS LAST_LOADED_AT,
+            AVG(IFF(LOADED_AT >= DATEADD('hour', -1, SYSDATE()),
+                    DATEDIFF('second', EVENT_TIMESTAMP, LOADED_AT), NULL)) AS AVG_LAG_SEC
+        FROM {TABLE}
     """
     return conn.query(sql, ttl=300)
 
@@ -339,12 +362,72 @@ def quality_summary(latest_q):
     else:
         label = f"🟢 품질 {passed}/{total} 통과 · {time_text}"
 
+    names = q["TEST_NAME"].astype(str).map(friendly_test_name)
     table = pd.DataFrame({
-        "테스트": q["TEST_NAME"],
+        "단계": names.map(lambda x: x[0]),
+        "검사": names.map(lambda x: x[1]),
         "결과": q["STATUS"].map(QUALITY_LABEL).fillna(q["STATUS"]),
-        "위반 건수": pd.to_numeric(q["FAILURES"], errors="coerce").fillna(0).astype(int),
+        "위반": pd.to_numeric(q["FAILURES"], errors="coerce").fillna(0).astype(int),
     })
+    # 원본(staging) 테스트를 먼저, 그다음 CLEAN 테스트
+    table["_order"] = (table["단계"] != "원본").astype(int)
+    table = table.sort_values(["_order", "검사"]).drop(columns="_order").reset_index(drop=True)
     return label, table
+
+
+def friendly_test_name(name):
+    """dbt 테스트 이름을 짧은 (단계, 검사) 문구로 바꾼다.
+    예) not_null_stg_robot_sensor_ROBOT_ID → ("원본", "ROBOT_ID 빈 값 없음")"""
+    n = name.lower()
+    layer = "원본" if "stg_" in n else "CLEAN"
+    column = next(
+        (c for c in ["event_timestamp", "event_id", "robot_id", "status"] if c in n), ""
+    ).upper()
+    if n.startswith("not_null"):
+        kind = "빈 값 없음"
+    elif n.startswith("unique"):
+        kind = "중복 없음"
+    elif n.startswith("accepted_values"):
+        kind = "허용 값만"
+    else:
+        return layer, name
+    return layer, f"{column} {kind}".strip()
+
+
+FRESHNESS_WARN_MINUTES = 15   # 마지막 적재가 이보다 오래되면 빨간색 경고 (5분 주기 × 3회)
+
+
+def format_minutes(minutes):
+    if minutes < 1:
+        return "1분 미만"
+    if minutes < 60:
+        return f"{int(minutes)}분"
+    return f"{int(minutes // 60)}시간 {int(minutes % 60)}분"
+
+
+def freshness_text():
+    """제목 아래 문구: '마지막 적재 3분 전 · 평균 지연 2.4분'. 조회 실패나 값이 없으면 빈 문자열."""
+    try:
+        fr = load_freshness()
+        fr.columns = [str(c).upper() for c in fr.columns]
+        last_loaded = pd.to_datetime(fr["LAST_LOADED_AT"].iloc[0], errors="coerce")
+        avg_lag = pd.to_numeric(fr["AVG_LAG_SEC"].iloc[0], errors="coerce")
+    except Exception:
+        return ""
+
+    if pd.isna(last_loaded):
+        return ""
+
+    now_utc = pd.Timestamp.now("UTC").tz_localize(None)
+    since_min = max((now_utc - last_loaded).total_seconds() / 60, 0)
+
+    text = f"마지막 적재 {format_minutes(since_min)} 전"
+    if pd.notna(avg_lag):
+        text += f" · 평균 지연 {avg_lag / 60:.1f}분"
+
+    if since_min > FRESHNESS_WARN_MINUTES:
+        return f' · <span style="color:#e5484d;font-weight:700">⚠ {text}</span>'
+    return f" · {text}"
 
 
 def quality_history_table(hist):
@@ -630,6 +713,7 @@ def dashboard():
             load_alert_history.clear()
             load_quality_latest.clear()
             load_quality_history.clear()
+            load_freshness.clear()
 
     render_quality_badge(quality_col)
 
@@ -661,7 +745,7 @@ def dashboard():
     header_slot.markdown(
         '<div class="app-title">🤖 Robot Condition Monitor</div>'
         '<div class="app-caption">'
-        f"AWS S3 → Airflow → Snowflake → dbt → Streamlit{last_text}"
+        f"AWS S3 → Airflow → Snowflake → dbt → Streamlit{last_text}{freshness_text()}"
         "</div>",
         unsafe_allow_html=True,
     )
@@ -832,6 +916,15 @@ def dashboard():
                 {"WARNING": "🟠 경고", "DANGER": "🔴 위험"}
             ).fillna(display["STATUS"])
 
+            # 원본 파일: S3 경로 전체 대신 파일 이름만 (예전 데이터는 기록이 없어 '-')
+            if "SOURCE_FILE" in display.columns:
+                display["SOURCE_FILE"] = (
+                    display["SOURCE_FILE"]
+                    .fillna("")
+                    .astype(str)
+                    .map(lambda p: p.rsplit("/", 1)[-1] if p else "-")
+                )
+
             display = display.rename(
                 columns={
                     "ROBOT_ID": "로봇",
@@ -841,10 +934,11 @@ def dashboard():
                     "VIBRATION": "진동",
                     "MOTOR_CURRENT": "모터 전류",
                     "SPEED": "속도",
+                    "SOURCE_FILE": "원본 파일",
                 }
             )
 
-            columns = ["로봇", "발생 시간", "상태", "온도", "진동", "모터 전류", "속도"]
+            columns = ["로봇", "발생 시간", "상태", "온도", "진동", "모터 전류", "속도", "원본 파일"]
             display = display[[c for c in columns if c in display.columns]]
 
             st.dataframe(
