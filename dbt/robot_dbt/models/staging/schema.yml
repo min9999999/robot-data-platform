@@ -17,3 +17,9 @@ models:
           - not_null:
               config:
                 severity: warn
+      - name: STATUS                                
+        data_tests:
+          - accepted_values:
+              values: ['NORMAL', 'WARNING', 'DANGER']
+              config:
+                severity: warn

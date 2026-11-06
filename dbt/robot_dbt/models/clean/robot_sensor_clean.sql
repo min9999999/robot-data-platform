@@ -11,6 +11,7 @@ from {{ ref('stg_robot_sensor') }}
 where EVENT_ID is not null
   and ROBOT_ID is not null
   and EVENT_TIMESTAMP is not null
+  and STATUS in ('NORMAL', 'WARNING', 'DANGER')
 {% if is_incremental() %}
   and EVENT_TIMESTAMP >= (
       select dateadd('minute', -30, max(EVENT_TIMESTAMP)) from {{ this }}
