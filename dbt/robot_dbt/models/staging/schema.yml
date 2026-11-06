@@ -1,0 +1,19 @@
+version: 2
+models:
+  - name: stg_robot_sensor
+    columns:
+      - name: EVENT_ID
+        data_tests:
+          - not_null:
+              config:
+                severity: warn
+      - name: ROBOT_ID
+        data_tests:
+          - not_null:
+              config:
+                severity: warn
+      - name: EVENT_TIMESTAMP
+        data_tests:
+          - not_null:
+              config:
+                severity: warn

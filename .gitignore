@@ -1,0 +1,17 @@
+# 비밀 정보
+.env
+*.pem
+secrets.toml
+.streamlit/
+profiles.yml
+
+# dbt 실행 결과물
+target/
+dbt_packages/
+logs/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/

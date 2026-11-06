@@ -1,0 +1,13 @@
+version: 2
+models:
+  - name: robot_sensor_clean
+    description: "중복 제거와 필수값 검증을 거친 로봇 센서 데이터"
+    columns:
+      - name: EVENT_ID
+        tests: [unique, not_null]
+      - name: ROBOT_ID
+        tests: [not_null]
+      - name: STATUS
+        tests:
+          - accepted_values:
+              values: ['NORMAL', 'WARNING', 'DANGER']

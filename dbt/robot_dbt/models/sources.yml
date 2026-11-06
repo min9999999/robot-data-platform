@@ -1,0 +1,7 @@
+version: 2
+sources:
+  - name: raw
+    database: DEV
+    schema: RAW_DATA
+    tables:
+      - name: ROBOT_SENSOR_SIMULATED

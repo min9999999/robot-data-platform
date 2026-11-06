@@ -1,0 +1,3 @@
+streamlit>=1.66.0
+snowflake-connector-python
+pandas
