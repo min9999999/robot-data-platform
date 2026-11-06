@@ -13,7 +13,7 @@ EC2 시뮬레이터 → S3 → Airflow → Snowflake(RAW) → dbt(CLEAN + 품질
 | EC2 시뮬레이터 | 로봇 6대의 센서 데이터를 10초마다 생성하고, 1분마다 S3에 CSV로 업로드 |
 | Airflow | 5분마다 새 파일을 찾아 RAW에 적재, dbt 실행, 이상 징후 메일 발송 |
 | Snowflake | RAW / CLEAN 테이블, 테스트 결과와 알람 이력 저장 |
-| dbt | RAW → CLEAN 정제(중복 제거, 필수값 검증)와 품질 테스트 9개 |
+| dbt | RAW → CLEAN 정제(중복 제거, 필수값 검증)와 품질 테스트 7개 |
 | Streamlit | 로봇 상태, 센서 추이, 경고 이력, 데이터 품질 배지 |
 
 ## 주요 설계
