@@ -2,7 +2,8 @@
     materialized='incremental',
     unique_key='EVENT_ID',
     incremental_strategy='merge',
-    alias='ROBOT_SENSOR_SIMULATED'
+    alias='ROBOT_SENSOR_SIMULATED',
+    on_schema_change='append_new_columns'
 ) }}
 
 select *

@@ -39,7 +39,7 @@ DBT_PROJECT_DIR = "/opt/airflow/dbt/robot_dbt"
 DBT_PROFILES_DIR = "/home/airflow/.dbt"
 
 # ----- 알람 메일 설정 -----
-SMTP_CONN_ID = "min_6302"                 # 테스트에 성공한 Connection
+SMTP_CONN_ID = "min_6302"                   # Gmail SMTP Connection (Admin > Connections)
 ALERT_LOG_TABLE = "DEV.CLEAN.ROBOT_ALERT_LOG"
 
 # Admin > Variables 에 등록
@@ -177,8 +177,18 @@ def load_raw_snowflake(ti):
             VIBRATION FLOAT,
             MOTOR_CURRENT FLOAT,
             SPEED FLOAT,
-            STATUS VARCHAR
+            STATUS VARCHAR,
+            SOURCE_FILE VARCHAR,          -- 이 행을 마지막으로 적재한 S3 파일 경로 (추적용)
+            LOADED_AT TIMESTAMP_NTZ       -- 적재 시각 (UTC)
         )
+    """)
+
+    # 이미 있는 RAW 테이블에도 추적 컬럼을 추가한다. (있으면 아무 일도 안 함)
+    snowflake_hook.run(f"""
+        ALTER TABLE {RAW_TABLE} ADD COLUMN IF NOT EXISTS SOURCE_FILE VARCHAR
+    """)
+    snowflake_hook.run(f"""
+        ALTER TABLE {RAW_TABLE} ADD COLUMN IF NOT EXISTS LOADED_AT TIMESTAMP_NTZ
     """)
 
     # 신규 파일이 없으면 종료 (dbt 태스크는 그대로 실행된다)
@@ -273,6 +283,8 @@ def load_raw_snowflake(ti):
                 # 임시 테이블 -> RAW
                 # EVENT_ID가 같으면 최신 시간의 데이터로 갱신한다.
                 # 새 EVENT_ID라면 RAW에 추가한다.
+                # 어느 S3 파일에서 언제 적재했는지(SOURCE_FILE, LOADED_AT)도 함께 남긴다.
+                # S3 경로는 SQL 문자열에 직접 붙이지 않고 바인딩 변수(%(source_file)s)로 넘긴다.
                 cursor.execute(f"""
                     MERGE INTO {RAW_TABLE} AS T
                     USING (
@@ -286,7 +298,9 @@ def load_raw_snowflake(ti):
                             VIBRATION,
                             MOTOR_CURRENT,
                             SPEED,
-                            STATUS
+                            STATUS,
+                            %(source_file)s AS SOURCE_FILE,
+                            SYSDATE() AS LOADED_AT
                         FROM {STAGE_TABLE}
                         WHERE EVENT_ID IS NOT NULL
                         QUALIFY ROW_NUMBER() OVER (
@@ -309,7 +323,9 @@ def load_raw_snowflake(ti):
                         T.VIBRATION = S.VIBRATION,
                         T.MOTOR_CURRENT = S.MOTOR_CURRENT,
                         T.SPEED = S.SPEED,
-                        T.STATUS = S.STATUS
+                        T.STATUS = S.STATUS,
+                        T.SOURCE_FILE = S.SOURCE_FILE,
+                        T.LOADED_AT = S.LOADED_AT
 
                     WHEN NOT MATCHED THEN INSERT (
                         EVENT_ID,
@@ -320,7 +336,9 @@ def load_raw_snowflake(ti):
                         VIBRATION,
                         MOTOR_CURRENT,
                         SPEED,
-                        STATUS
+                        STATUS,
+                        SOURCE_FILE,
+                        LOADED_AT
                     ) VALUES (
                         S.EVENT_ID,
                         S.ROBOT_ID,
@@ -330,9 +348,11 @@ def load_raw_snowflake(ti):
                         S.VIBRATION,
                         S.MOTOR_CURRENT,
                         S.SPEED,
-                        S.STATUS
+                        S.STATUS,
+                        S.SOURCE_FILE,
+                        S.LOADED_AT
                     )
-                """)
+                """, {"source_file": s3_key})
 
             # RAW 적재가 성공한 뒤 완료 기록
             processed_keys.add(s3_key)

@@ -1,5 +1,3 @@
-**환경에 맞게 수정
-
 Welcome to your new dbt project!
 
 ### Using the starter project

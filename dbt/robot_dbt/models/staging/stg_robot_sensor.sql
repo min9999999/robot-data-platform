@@ -7,5 +7,7 @@ select
     VIBRATION,
     MOTOR_CURRENT,
     SPEED,
-    upper(STATUS) as STATUS
+    upper(STATUS) as STATUS,
+    SOURCE_FILE,
+    LOADED_AT
 from {{ source('raw', 'ROBOT_SENSOR_SIMULATED') }}
